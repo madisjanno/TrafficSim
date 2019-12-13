@@ -1,0 +1,730 @@
+<!DOCTYPE>
+<html>
+	<head>
+		<title>Prototype</title>
+		<script type="text/javascript" src="three.min.js"></script>
+        <script type="text/javascript" src="https://rawgit.com/mrdoob/stats.js/master/build/stats.min.js"></script>
+        <script type="text/javascript" src="dat.gui.min.js"></script>
+		<script type="text/javascript">
+		
+            // SETUP
+			var renderer, scene, camera;
+			var lookAt = new THREE.Vector3(0.0, 0.0, 0.0);
+			var viewerPosition = new THREE.Vector3(0.0, 55.0, -55.0);
+            
+            var geometry, roadMaterial, carMaterial, mesh;
+            
+            
+            // STATS
+            var stats = new Stats();
+            stats.showPanel( 0 );
+            
+            // GLOBALS
+            var timestep = 1/60;
+            
+            // OBJECTS
+            var cars = [];
+            var roads = [];
+            
+            const IntentTypes = {
+                UNDECIDED: {name:"undecided"},
+                LANE_SWITCH: {name:"lane switch"},
+                JUNCTION: {name:"junction"},
+                ARRIVED: {name:"arrived"}
+            };
+            
+            var generationFunction = {generationFunction:false};
+		
+			function onLoad() { 
+				var canvasContainer = document.getElementById('myCanvasContainer');
+                document.body.appendChild( stats.dom );
+                
+				var width = 1200; 
+				var height = 800;
+				
+                renderer = new THREE.WebGLRenderer(); 
+                renderer.setSize(width, height);
+                canvasContainer.appendChild(renderer.domElement);
+                
+				camera = new THREE.PerspectiveCamera( 70, width/height, 0.01, 1000 );
+				camera.position.set(viewerPosition.x, viewerPosition.y, viewerPosition.z);
+				camera.up = new THREE.Vector3(0, 1, 0);
+				camera.lookAt(lookAt);
+				
+                
+                scene = new THREE.Scene();
+
+                geometry = new THREE.BoxGeometry( 1, 1, 1 );
+                roadMaterial = new THREE.MeshBasicMaterial({color: new THREE.Color(0.2,0.2,0.2)});
+                carMaterial = new THREE.MeshNormalMaterial();
+                
+                createGUI();
+                
+				draw();
+			}
+            
+            function createGUI() {
+                var gui = new dat.GUI();
+                
+                gui.add(generationFunction, 'generationFunction', {LaneStopTest:"LaneStopTest", BlockTest:"BlockTest", Roundabout:"Roundabout", Roundabout2:"Roundabout2"} );
+                gui.add(this, 'generate');
+            }
+            
+            function laneStopTest() {
+                r1 = generateRoad(new THREE.Vector3(-25,0,0), new THREE.Vector3(0,0,0));
+                r1_p = generateRoad(new THREE.Vector3(-25,0,2), new THREE.Vector3(0,0,2));
+                
+                r2 = generateRoad(new THREE.Vector3(0,0,0), new THREE.Vector3(25,0,0));
+                r2_p = generateRoad(new THREE.Vector3(0,0,2), new THREE.Vector3(25,0,2));
+                
+                r1.to[r2.id] = {length:0, blockers:[]}
+                r1_p.to[r2_p.id] = {length:0, blockers:[]}
+                
+                r1.lane[r1_p.id] = {distance:2, displayDir: 1}
+                r1_p.lane[r1.id] = {distance:2, displayDir: -1}
+                r2.lane[r2_p.id] = {distance:2, displayDir: 1}
+                r2_p.lane[r2.id] = {distance:2, displayDir: -1}
+                
+                r3 = generateRoad(new THREE.Vector3(25,0,2), new THREE.Vector3(25,0,27));
+                r2_p.to[r3.id] = {length:0, blockers:[]};
+                
+                r4 = generateRoad(new THREE.Vector3(25,0,2), new THREE.Vector3(50,0,2));
+                r2_p.to[r4.id] = {length:0, blockers:[]};
+                
+                c1 = generateCar(0, r2, r3);
+                c2 = generateCar(5, r2, r4);
+                
+                c3 = generateCar(0, r2_p, r3);
+                c3 = generateCar(5, r2_p, r3);
+                c3 = generateCar(10, r1_p, r3);
+                c3 = generateCar(15, r1_p, r3);
+            }
+            
+            function blockTest() {
+                r1 = generateRoad(new THREE.Vector3(-25,0,0), new THREE.Vector3(0,0,0));
+                r2 = generateRoad(new THREE.Vector3(0,0,0), new THREE.Vector3(25,0,0));
+                r3 = generateRoad(new THREE.Vector3(0,0,-25), new THREE.Vector3(0,0,0));
+                
+                r1.to[r2.id] = {length:0, blockers:[]};
+                
+                r3.to[r2.id] = {length:0, blockers:[r1]};
+                
+                c1 = generateCar(0, r1, r2);
+                c2 = generateCar(0, r3, r2);
+            }
+            
+            function roundabout() {
+                r1 = generateRoad(new THREE.Vector3(0,0,-25), new THREE.Vector3(-25,0,0));
+                r2 = generateRoad(new THREE.Vector3(-25,0,0), new THREE.Vector3(0,0,25));
+                r3 = generateRoad(new THREE.Vector3(0,0,25), new THREE.Vector3(25,0,0));
+                r4 = generateRoad(new THREE.Vector3(25,0,0), new THREE.Vector3(0,0,-25));
+                
+                fromTo(r1, r2);
+                fromTo(r2, r3);
+                fromTo(r3, r4);
+                fromTo(r4, r1);
+                
+                
+                top_in = generateRoad(new THREE.Vector3(1,0,150), new THREE.Vector3(1,0,25));
+                top_out = generateRoad(new THREE.Vector3(-1,0,25), new THREE.Vector3(-1,0,150));
+                
+                fromTo(top_in, r3);
+                top_in.to[r3.id].blockers.push(r2);
+                fromTo(r2, top_out);
+                
+                
+                left_in = generateRoad(new THREE.Vector3(150,0,-1), new THREE.Vector3(25,0,-1));
+                left_out = generateRoad(new THREE.Vector3(25,0,1), new THREE.Vector3(150,0,1));
+                
+                fromTo(left_in, r4);
+                left_in.to[r4.id].blockers.push(r3);
+                fromTo(r3, left_out);
+                
+                
+                bot_in = generateRoad(new THREE.Vector3(-1,0,-150), new THREE.Vector3(-1,0,-25));
+                bot_out = generateRoad(new THREE.Vector3(1,0,-25), new THREE.Vector3(1,0,-150));
+                
+                fromTo(bot_in, r1);
+                bot_in.to[r1.id].blockers.push(r4);
+                fromTo(r4, bot_out);
+                
+                
+                right_in = generateRoad(new THREE.Vector3(-150,0,1), new THREE.Vector3(-25,0,1));
+                right_out = generateRoad(new THREE.Vector3(-25,0,-1), new THREE.Vector3(-150,0,-1));
+                
+                fromTo(right_in, r2);
+                right_in.to[r2.id].blockers.push(r1);
+                fromTo(r1, right_out);
+                
+                inputs = [top_in, right_in, left_in, bot_in];
+                outputs = [top_out, right_out, left_out, bot_out];
+                
+                for (var i = 0; i < 100; i++) {
+                    input = Math.floor(Math.random()*4)
+                    output = Math.floor(Math.random()*4)
+                    start = Math.random()*125;
+                    generateCar(start, inputs[input], outputs[output]);
+                }
+            }
+            
+            function roundabout2() {
+                r1 = generateRoad(new THREE.Vector3(0,0,-25), new THREE.Vector3(-25,0,0));
+                r2 = generateRoad(new THREE.Vector3(-25,0,0), new THREE.Vector3(0,0,25));
+                r3 = generateRoad(new THREE.Vector3(0,0,25), new THREE.Vector3(25,0,0));
+                r4 = generateRoad(new THREE.Vector3(25,0,0), new THREE.Vector3(0,0,-25));
+                
+                fromTo(r1, r2);
+                fromTo(r2, r3);
+                fromTo(r3, r4);
+                fromTo(r4, r1);
+                
+                
+                top_in = generateRoad(new THREE.Vector3(1,0,150), new THREE.Vector3(1,0,25));
+                top_out = generateRoad(new THREE.Vector3(-1,0,25), new THREE.Vector3(-1,0,150));
+                
+                fromTo(top_in, r3);
+                top_in.to[r3.id].blockers.push(r2);
+                fromTo(r2, top_out);
+                
+                
+                left_in = generateRoad(new THREE.Vector3(150,0,-1), new THREE.Vector3(25,0,-1));
+                left_out = generateRoad(new THREE.Vector3(25,0,1), new THREE.Vector3(150,0,1));
+                
+                fromTo(left_in, r4);
+                left_in.to[r4.id].blockers.push(r3);
+                fromTo(r3, left_out);
+                
+                
+                bot_in = generateRoad(new THREE.Vector3(-1,0,-150), new THREE.Vector3(-1,0,-25));
+                bot_out = generateRoad(new THREE.Vector3(1,0,-25), new THREE.Vector3(1,0,-150));
+                
+                fromTo(bot_in, r1);
+                bot_in.to[r1.id].blockers.push(r4);
+                fromTo(r4, bot_out);
+                
+                
+                right_in = generateRoad(new THREE.Vector3(-150,0,1), new THREE.Vector3(-25,0,1));
+                right_out = generateRoad(new THREE.Vector3(-25,0,-1), new THREE.Vector3(-150,0,-1));
+                
+                fromTo(right_in, r2);
+                right_in.to[r2.id].blockers.push(r1);
+                fromTo(r1, right_out);
+                
+                inputs = [top_in, right_in, left_in];
+                outputs = [top_out, right_out, left_out, bot_out];
+                
+                for (var i = 0; i < 100; i++) {
+                    input = Math.floor(Math.random()*3)
+                    output = Math.floor(Math.random()*4)
+                    start = Math.random()*125;
+                    generateCar(start, inputs[input], outputs[output]);
+                }
+            }
+            
+            function fromTo(f, t) {
+                f.to[t.id] = {length:0, blockers:[]}
+            }
+            
+            function generate() {
+                for (var car of cars) {
+                    scene.remove(car.model);
+                }
+                for (var road of roads) {
+                    scene.remove(road.model);
+                }
+                cars = []
+                roads = []
+                if (generationFunction.generationFunction) {
+                    switch(generationFunction.generationFunction) {
+                        case "LaneStopTest":
+                            laneStopTest();
+                            break;
+                        case "BlockTest":
+                            blockTest();
+                            break;
+                        case "Roundabout":
+                            roundabout();
+                            break;
+                        case "Roundabout2":
+                            roundabout2();
+                            break;
+                    }
+                }
+            }
+			
+			function draw() {
+                requestAnimationFrame(draw);
+                
+                stats.begin();
+                
+                calculateIntents();
+                calculateSteps();
+                updateModelLocations();
+                renderer.render( scene, camera );
+                
+                stats.end();
+			}
+            
+            // GENERATION FUNCTIONS
+            function generateRoad(start, end) {
+                road = {id:0, start:start, end:end, length:start.distanceTo(end), cars:[], speedlimit: 50, to:{}, lane:{}}
+                
+                i = roads.push(road);
+                road.id = i-1;
+                
+                roadMesh = new THREE.Mesh( geometry, roadMaterial );
+                roadMesh.scale.z = road.length;
+                roadMesh.scale.y = 0.2;
+                roadMesh.position.addVectors(start,end).divideScalar(2);
+                roadMesh.lookAt(end);
+                road.model = roadMesh;
+                
+                scene.add(roadMesh);
+                
+                return road;
+            }
+            
+            function generateCar(start, road, destination) {
+                
+                car = {location1: start, road1: road}
+                car.maxAcceleration = 3;
+                car.acceleration = 0;
+                car.maxSpeed = 100;
+                car.speed = 0;
+                car.destination = destination;
+                
+                carMesh = new THREE.Mesh( geometry, carMaterial );
+                car.model = carMesh;
+                carMesh.scale.z = 2;
+                
+                cars.push(car);
+                addToRoadCarList(car, road);
+                scene.add(carMesh);
+                
+                updateModelLocation(car);
+                return car;
+            }
+            
+            function calculateSteps() {
+                for (car of cars) {
+                    calculateStep(car);
+                }
+            }
+            
+            // MOVEMENT
+            function calculateStep(car) {
+                var distmoved = car.speed*timestep + car.acceleration*Math.pow(timestep, 2)/2;
+                car.speed += car.acceleration*timestep;
+                if (car.speed < 0) {
+                    car.speed = 0;
+                    return;
+                }
+                
+                while (distmoved > 0) {
+                    currentIntent = car.path[car.road1.id];
+                    switch(currentIntent.type) {
+                        case IntentTypes.JUNCTION:
+                            if (car.transfering) {
+                                transferLength = car.road1.to[currentIntent.nextRoad.id].length;
+                                if (car.transfer+distmoved > transferLength) {
+                                    removeFromCarList(car, car.road1);
+                                    car.transfer = 0;
+                                    car.transfering = false;
+                                    car.road1 = currentIntent.nextRoad;
+                                    car.location1 = 0;
+                                    distmoved -= transferLength - car.transfer;
+                                } else {
+                                    car.transfer += distmoved;
+                                    distmoved = 0;
+                                    car.transferPercent = car.transfer/transferLength;
+                                }
+                            } else if (car.location1+distmoved > car.road1.length) {
+                                toEnd = car.road1.length-car.location1;
+                                car.location1 = car.road1.length;
+                                distmoved -= toEnd;
+                                
+                                car.transfering = true;
+                                car.transfer = 0;
+                                car.road2 = currentIntent.nextRoad;
+                                car.location2 = 0;
+                                addToRoadCarList(car, car.road2);
+                                car.transferPercent = 0;
+                                
+                            } else {
+                                car.location1 += distmoved;
+                                distmoved = 0
+                            }
+                            break;
+                        case IntentTypes.LANE_SWITCH:
+                            if (!car.transfering) {
+                                car.transfering = true;
+                                car.road2 = currentIntent.nextRoad;
+                                car.transfer = 0;
+                                car.location2 = car.location1;
+                                addToRoadCarList(car, car.road2);
+                                car.angle = currentIntent.angle;
+                                car.forward = Math.cos(car.angle);
+                                car.displayDir = car.road1.lane[car.road2.id].displayDir;
+
+                                car.transferPercent = 0;
+                            }
+
+                            transferLength = car.road1.lane[currentIntent.nextRoad.id].distance;
+
+                            angle = car.angle;
+                            forward = Math.cos(angle);
+                            sideways = Math.sin(angle);
+
+                            if (car.transfer+distmoved*sideways > transferLength) {
+                                removeFromCarList(car, car.road1);
+                                car.road1 = car.road2;
+                                car.location1 = car.location2;
+
+                                oneMove = (distmoved*sideways-(transferLength-car.transfer))/(distmoved*sideways)*distmoved;
+                                distmoved -= oneMove;
+                                car.location1 += oneMove*forward;
+                                car.transfering = false;
+                                car.angle = 0;
+                                car.forward = 1;
+                            } else {
+                                car.location1 += distmoved*forward;
+                                car.location2 += distmoved*forward;
+                                car.transfer += distmoved*sideways;
+
+                                distmoved = 0;
+
+                                car.transferPercent = car.transfer/transferLength;
+                            }
+                            break;
+                        case IntentTypes.UNDECIDED:
+                        case IntentTypes.ARRIVED:
+                            car.location1 += distmoved;
+                            distmoved = 0
+                            break;
+                            
+                    }
+                }
+            }
+            
+            // AI
+            function calculateIntents() {
+                for (car of cars) {
+                    calculateIntent(car);
+                }
+            }
+            
+            function calculateIntent(car) {
+                if (!car.path) {
+                    car.path = findPath(car.road1, car.location1, car.destination);
+                    initializePath(car);
+                }
+                
+                var activeNode = car.path[car.road1.id];
+                calculateNodeIntent(car, activeNode);
+                if (activeNode.nextRoad)
+                    calculateNodeIntent(car, car.path[activeNode.nextRoad.id]);
+                
+                
+                var desiredLocation = 1000000000;
+                
+                var nextCarStats = checkNextCar(car);
+                if (nextCarStats) {
+                    var desiredDistance = nextCarStats.distance-3+car.speed;
+                    desiredLocation = car.location1 + desiredDistance;
+                }
+                
+                if (car.path[car.road1.id].stay) {
+                    desiredLocation = Math.min(car.road1.length, desiredLocation);
+                }
+                
+                if (car.path[car.road1.id].type == IntentTypes.JUNCTION) {
+                    var blocked = false;
+                    for (blocker of car.road1.to[car.path[car.road1.id].nextRoad.id].blockers) {
+                        if (checkJunctionBlock(blocker)) {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                    if (blocked) {
+                        desiredLocation = Math.min(car.road1.length, desiredLocation);
+                    }
+                }
+                
+                var distanceToLocation = desiredLocation - car.location1;
+                var timeToLocation = distanceToLocation/car.speed;
+                
+                
+                if (timeToLocation < 2) {
+                    car.acceleration -= Math.pow(1/timeToLocation, 2)*10;
+                } else {
+                    car.acceleration = Math.min(car.maxAcceleration, timeToLocation);
+                }
+            }
+            
+            function calculateNodeIntent(car, node) {
+                if (node.type === IntentTypes.LANE_SWITCH)
+                    return;
+                
+                if (node.possibleLanes && node.type !== IntentTypes.LANE_SWITCH && !car.transfering) {
+                    for (lane_id in node.possibleLanes) {
+                        if (checkLaneClearForTurn(car.location1, car.speed, roads[lane_id])) {
+                            node.type = IntentTypes.LANE_SWITCH;
+                            node.nextRoad = roads[lane_id];
+                            node.angle = Math.PI/4;
+                            node.stay = false;
+                            return;
+                        }
+                    }
+                }
+                
+                if (node.possibleRoads) {
+                    node.type = IntentTypes.JUNCTION;
+                    node.nextRoad = roads[Object.keys(node.possibleRoads)[0]];
+                    return;
+                }
+            }
+            
+            function checkJunctionBlock(road) {
+                if (road.cars.length > 0) {
+                    var car = road.cars[road.cars.length-1];
+                    if ( (car.road1.length-car.location1)/car.speed < 1.5 )
+                        return true;
+                }
+                return false;
+            }
+            
+            function checkNextCar(car) {
+                var i = car.road1.cars.indexOf(car);
+                var nextCar = false;
+                if (i < car.road1.cars.length-1) {
+                    nextCar = car.road1.cars[i+1];
+                    return {distance:nextCar.location1-car.location1, speed:nextCar.speed};
+                } else {
+                    var distanceToCar = car.road1.length-car.location1;
+                    var nextRoad = car.path[car.road1.id].nextRoad
+                    while (nextRoad) {
+                        if (nextRoad.cars.length > 0) {
+                            nextCar = nextRoad.cars[0];
+                            return {distance:distanceToCar+nextCar.location1, speed:nextCar.speed};
+                        } // else
+                        distanceToCar += nextRoad.length;
+                        nextRoad = car.path[nextRoad.id].nextRoad;
+                    }
+                }
+                
+                return false;
+            }
+            
+            function checkLaneClearForTurn(position, currentSpeed, lane) {
+                var backCar = false;
+                var frontCar = false;
+                for (car of lane.cars) {
+                    if (car.location1 < position) {
+                        if (!backCar) {
+                            backCar = car
+                        }
+                        if (car.location1 > backCar.location1) {
+                            backCar = car;
+                        }
+                    } else {
+                        if (!frontCar) {
+                            frontCar = car
+                        }
+                        if (car.location1 < frontCar.location1) {
+                            frontCar = car;
+                        }
+                    }
+                }
+                if (backCar) {
+                    if (position-backCar.location1 < 3)
+                        return false;
+                    if (currentSpeed < backCar.speed) {
+                        var untilCollision = (position-backCar.location1)/(backCar.speed-currentSpeed);
+                        if (untilCollision < 5)
+                            return false;
+                    }
+                }
+                if (frontCar) {
+                    if (frontCar.location1-position < 3)
+                        return false;
+                    if (currentSpeed > frontCar.speed) {
+                        var untilCollision = (position-frontCar.location1)/(frontCar.speed-currentSpeed);
+                        if (untilCollision < 3)
+                            return false;
+                    }
+                }
+                return true;
+            }
+            
+            function initializePath(car) {
+                for (road_id in car.path) {
+                    if (!car.path[road_id].possibleRoads)
+                        car.path[road_id].stay = true;
+                }
+            }
+            
+            // CAR LIST UTILITY
+            function addToRoadCarList(car, road) {
+                var i = 0;
+                for (; i < road.cars.length; i++) {
+                    if (carLocation(road, road.cars[i]) > carLocation(road, car))
+                        break;
+                }
+                road.cars.splice(i, 0, car);
+            }
+            
+            function removeFromCarList(car, road) {
+                var index = road.cars.indexOf(car);
+                if (index !== -1) road.cars.splice(index, 1);
+            }
+            
+            function carLocation(road, car) {
+                if (car.road1 == road) {
+                    return car.location1;
+                }
+                if (car.road2 == road) {
+                    return car.location2;
+                }
+                throw new Error("Mismatch between car and road.");
+            }
+            
+            // PATHFINDING
+            function findPath(startRoad, startLocation, endRoad) {
+                visited = {}; // id: {timeToEnd:, parents:{}}
+                
+                var queue = [{time:0, road:startRoad, location:startLocation, from:false}];
+                
+                var endReached = false;
+                
+                while (queue.length > 0) {
+                    var current = queue[0];
+                    queue.shift();
+                    
+                    // Already visited
+                    if (visited[current.road.id]) {
+                        // If definitely not an alternate path, we don't do the calculations
+                        if (current.time < visited[current.road.id].timeToEnd) {
+                            // Calculate if it gets there at the same time as other paths, in that case add to list of parents.
+                            var timeToEnd = current.time + (current.road.length-current.location)/current.road.speedlimit;
+                            if (Math.abs(visited[current.road.id].timeToEnd-timeToEnd) < 0.0001) {
+                                visited[current.road.id].parents[current.from.id] = true;
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    if (endReached)
+                        continue;
+                    
+                    // Add to visited list, write data for time comparisons.
+                    var toRoadEnd = current.road.length-current.location;
+                    var timeToEnd = toRoadEnd/current.road.speedlimit;
+                    
+                    visited[current.road.id] = {timeToEnd:current.time+timeToEnd, parents:{}};
+                    visited[current.road.id].parents[current.from.id] = true;
+                    
+                    if (endRoad == current.road) {
+                        endReached = true;
+                        continue;
+                    }
+                    
+                    // From the tip of the road
+                    for (possibleRoad_id in current.road.to) {
+                        queue.push({
+                            time: current.time + timeToEnd + current.road.to[possibleRoad_id].length/current.road.speedlimit,
+                            road: roads[possibleRoad_id],
+                            location: 0, 
+                            from: current.road
+                        })
+                    }
+                    
+                    // Other lanes
+                    for (possibleRoad_id in current.road.lane) {
+                        var laneChange = current.road.lane[possibleRoad_id];
+                        queue.push({
+                            time: current.time + laneChange.distance/current.road.speedlimit,
+                            road: roads[possibleRoad_id],
+                            location: current.location,
+                            from: current.road
+                        })
+                    }
+                    queue.sort(function(a,b){a.time-b.time})
+                }
+                if (!endReached)
+                    throw new Error("Pathfinding goal not found");
+                
+                var children = {}
+                var queue = [endRoad.id]
+                for (var i = 0; i < queue.length; i++) {
+                    for (var parent in visited[queue[i]].parents) {
+                        if ( !(parent >= 0) ) {
+                            continue;
+                        }
+                        queue.push(parent);
+                        
+                        if (!children[parent])
+                            children[parent] = {}
+                        children[parent][queue[i]] = true
+                    }
+                }
+                
+                var nodes = {};
+                nodes[endRoad.id] = {type:IntentTypes.ARRIVED, possibleLanes:false, possibleRoads:false}
+                for (id in children) {
+                    var node = {type:IntentTypes.UNDECIDED, possibleLanes:false, possibleRoads:false }
+                    nodes[id] = node
+                    for (child_id in children[id]) {
+                        if (roads[id].to[child_id]) {
+                            if (!node.possibleRoads)
+                                node.possibleRoads = {}
+                            nodes[id].possibleRoads[child_id] = true;
+                        } else if (roads[id].lane[child_id]) {
+                            if (!node.possibleLanes)
+                                node.possibleLanes = {}
+                            nodes[id].possibleLanes[child_id] = true;
+                        }
+                    }
+                }
+                
+                
+                return nodes;
+            }
+            
+            
+            // GRAPHICS FUNCTIONS
+            function updateModelLocations() {
+                for (car of cars) {
+                    updateModelLocation(car)
+                }
+            }
+            
+            function updateModelLocation(car) {
+                percent = car.location1/car.road1.length;
+                car.model.position.addVectors(car.road1.start.clone().multiplyScalar(1-percent), car.road1.end.clone().multiplyScalar(percent));
+                car.model.rotation.copy(car.road1.model.rotation);
+                
+                if (car.transfering) {
+                    percent2 = car.location2/car.road2.length;
+                    secondaryPos = new THREE.Vector3().addVectors(car.road2.start.clone().multiplyScalar(1-percent2), car.road2.end.clone().multiplyScalar(percent2));
+                    
+                    car.model.position.addVectors(car.model.position.clone().multiplyScalar(1-car.transferPercent), secondaryPos.multiplyScalar(car.transferPercent));
+                    
+                    if (car.angle) {
+                        car.model.rotation.y -= angle*car.displayDir;
+                    }
+                }
+                
+                car.model.position.y += 1
+            }
+			
+		</script>
+
+	</head>
+	<body onload="onLoad()">
+		<div id="myCanvasContainer"></div>
+		<div id="statusContainer">
+			<span>Test</span>
+			<span>C1</span>
+		</div>
+	</body>
+</html>
